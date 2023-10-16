@@ -8,7 +8,7 @@ import (
 	"gitlab.com/gorib/try"
 )
 
-type SessionKey struct{}
+type Key struct{}
 
 type Session struct {
 	Uri           string
@@ -20,7 +20,7 @@ type Session struct {
 	SourceIp      string
 }
 
-func SetupSession(session Session) *Session {
+func Setup(session Session) *Session {
 	if session.CorrelationId == "" {
 		session.CorrelationId = try.Throw(uuid.NewV7()).String()
 	}
@@ -28,22 +28,22 @@ func SetupSession(session Session) *Session {
 }
 
 func NewContextWithSession(ctx context.Context, session Session) context.Context {
-	ctx = context.WithValue(ctx, SessionKey{}, SetupSession(session))
+	ctx = context.WithValue(ctx, Key{}, Setup(session))
 	return ctx
 }
 
-func SessionFromContext(ctx context.Context) *Session {
+func FromContext(ctx context.Context) *Session {
 	if ctx == nil {
 		return nil
 	}
-	s, _ := ctx.Value(SessionKey{}).(*Session)
+	s, _ := ctx.Value(Key{}).(*Session)
 	return s
 }
 
 func NewEmptyContextWithSession(ctx context.Context) context.Context {
-	session := SessionFromContext(ctx)
+	session := FromContext(ctx)
 	if session == nil {
-		session = SetupSession(Session{})
+		session = Setup(Session{})
 	}
 	return NewContextWithSession(context.Background(), *session)
 }
