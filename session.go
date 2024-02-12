@@ -2,10 +2,10 @@ package session
 
 import (
 	"context"
+	"math/rand"
+	"strconv"
 
 	"github.com/gofrs/uuid"
-
-	"gitlab.com/gorib/try"
 )
 
 type Key struct{}
@@ -22,14 +22,17 @@ type Session struct {
 
 func Setup(session Session) *Session {
 	if session.CorrelationId == "" {
-		session.CorrelationId = try.Throw(uuid.NewV7()).String()
+		if correlation, err := uuid.NewV7(); err == nil {
+			session.CorrelationId = correlation.String()
+		} else {
+			session.CorrelationId = strconv.Itoa(int(rand.Uint32()))
+		}
 	}
 	return &session
 }
 
 func NewContextWithSession(ctx context.Context, session Session) context.Context {
-	ctx = context.WithValue(ctx, Key{}, Setup(session))
-	return ctx
+	return context.WithValue(ctx, Key{}, Setup(session))
 }
 
 func FromContext(ctx context.Context) *Session {
