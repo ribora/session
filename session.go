@@ -5,7 +5,7 @@ import (
 	"math/rand"
 	"strconv"
 
-	"github.com/gofrs/uuid"
+	"github.com/google/uuid"
 )
 
 type Key struct{}
