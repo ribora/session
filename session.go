@@ -18,6 +18,12 @@ type Session struct {
 	UserAgent     string
 	UserLanguage  string
 	SourceIp      string
+
+	// W3C Trace Context (https://www.w3.org/TR/trace-context/) — filled by
+	// transport-layer middleware on entry, read by client-side propagation
+	// on exit.
+	Traceparent string
+	Tracestate  string
 }
 
 func Setup(session Session) *Session {
