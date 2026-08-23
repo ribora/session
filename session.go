@@ -2,10 +2,7 @@ package session
 
 import (
 	"context"
-	"math/rand"
-	"strconv"
-
-	"github.com/google/uuid"
+	"uuid"
 )
 
 type Key struct{}
@@ -28,11 +25,7 @@ type Session struct {
 
 func Setup(session Session) *Session {
 	if session.CorrelationId == "" {
-		if correlation, err := uuid.NewV7(); err == nil {
-			session.CorrelationId = correlation.String()
-		} else {
-			session.CorrelationId = strconv.Itoa(int(rand.Uint32()))
-		}
+		session.CorrelationId = uuid.NewV7().String()
 	}
 	return &session
 }
