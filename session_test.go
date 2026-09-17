@@ -15,9 +15,6 @@ const (
 	traceparentB = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
 )
 
-// Reproduces the pry.Ctx / span-start collision: pry copies the whole Session
-// out of the context on every log line while tracing middleware publishes the
-// traceparent of the span it just started. Run under -race.
 func TestTraceWriteDoesNotRaceWithStructCopy(t *testing.T) {
 	root := session.NewContextWithSession(context.Background(), session.Session{
 		Uri:    "/v1/orders",
@@ -29,7 +26,7 @@ func TestTraceWriteDoesNotRaceWithStructCopy(t *testing.T) {
 
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 10000; i++ {
+		for range 10000 {
 			ctx := session.WithTraceparent(root, traceparentA)
 			ctx = session.WithTraceparent(ctx, traceparentB)
 			_ = session.TraceparentFromContext(ctx)
@@ -38,7 +35,7 @@ func TestTraceWriteDoesNotRaceWithStructCopy(t *testing.T) {
 
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 10000; i++ {
+		for range 10000 {
 			s := session.FromContext(root)
 			copied := *s
 			if copied.Uri != "/v1/orders" {
@@ -56,25 +53,20 @@ func TestConcurrentDerivationFromOneParent(t *testing.T) {
 	root := session.NewContextWithSession(context.Background(), session.Session{})
 
 	var wg sync.WaitGroup
-	for i := 0; i < 8; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < 5000; j++ {
+	for range 8 {
+		wg.Go(func() {
+			for range 5000 {
 				ctx := session.WithTrace(root, traceparentA, "vendor=a")
 				if got := session.TraceparentFromContext(ctx); got != traceparentA {
 					t.Errorf("Traceparent = %q, want %q", got, traceparentA)
 					return
 				}
 			}
-		}()
+		})
 	}
 	wg.Wait()
 }
 
-// The point of holding the trace in the context: a span's traceparent dies with
-// the span's context. amqp's publisher starts a span, publishes and returns —
-// the caller's next outgoing call must not be parented to that finished span.
 func TestTraceDoesNotLeakIntoParentContext(t *testing.T) {
 	request := session.WithTraceparent(
 		session.NewContextWithSession(context.Background(), session.Session{}),
@@ -82,7 +74,7 @@ func TestTraceDoesNotLeakIntoParentContext(t *testing.T) {
 	)
 
 	publish := func(ctx context.Context) {
-		ctx = session.WithTraceparent(ctx, traceparentB) // span starts
+		ctx = session.WithTraceparent(ctx, traceparentB)
 		if got := session.TraceparentFromContext(ctx); got != traceparentB {
 			t.Errorf("inside span: Traceparent = %q, want %q", got, traceparentB)
 		}
@@ -120,15 +112,13 @@ func TestWithTracestateKeepsTraceparent(t *testing.T) {
 	}
 }
 
-// middleware/session.go reads CorrelationId off the context after the handler
-// returns, to set the response header.
 func TestFieldWrittenBeforeHandlerIsReadableAfter(t *testing.T) {
 	ctx := session.NewContextWithSession(context.Background(), session.Session{
 		CorrelationId: "corr-1",
 		Uri:           "/v1/orders",
 	})
 
-	session.WithTraceparent(ctx, traceparentA) // handler runs on a derived context
+	session.WithTraceparent(ctx, traceparentA)
 
 	s := session.FromContext(ctx)
 	if s.CorrelationId != "corr-1" {
@@ -148,8 +138,6 @@ func TestSetupGeneratesCorrelationId(t *testing.T) {
 	}
 }
 
-// Detached work must keep the trace it forked from: the background context is
-// built on context.Background(), which carries nothing by itself.
 func TestNewEmptyContextWithSessionCarriesTrace(t *testing.T) {
 	ctx := session.NewContextWithSession(context.Background(), session.Session{CorrelationId: "corr-1"})
 	ctx = session.WithTrace(ctx, traceparentA, "vendor=a")
@@ -182,10 +170,8 @@ func TestNewEmptyContextWithSessionWithoutSession(t *testing.T) {
 	}
 }
 
-// Copying a Session out of the context is safe only while every field is
-// written once, before the session reaches a context. A new field here is a
-// deliberate act: if anything ever writes it afterwards, it belongs on the
-// context next to the trace, not in the struct.
+// Fails when a field is added: put it here only if nothing writes it after the
+// session reaches a context, otherwise it belongs beside the trace.
 func TestSessionCarriesOnlyWriteOnceFields(t *testing.T) {
 	want := []string{
 		"Uri", "Method", "Body", "CorrelationId",
@@ -194,8 +180,8 @@ func TestSessionCarriesOnlyWriteOnceFields(t *testing.T) {
 
 	typ := reflect.TypeFor[session.Session]()
 	got := make([]string, 0, typ.NumField())
-	for i := range typ.NumField() {
-		got = append(got, typ.Field(i).Name)
+	for field := range typ.Fields() {
+		got = append(got, field.Name)
 	}
 
 	if !slices.Equal(got, want) {
@@ -213,8 +199,6 @@ func TestFromContextWithoutSession(t *testing.T) {
 	}
 }
 
-// Client-side propagation reads the trace off contexts that never passed through
-// tracing middleware, so the empty case has to be quiet rather than panic.
 func TestTraceFromContextWithoutTrace(t *testing.T) {
 	traceparent, tracestate := session.TraceFromContext(context.Background())
 	if traceparent != "" || tracestate != "" {

@@ -7,11 +7,6 @@ import (
 
 type Key struct{}
 
-// Session is shared by pointer across every goroutine holding a request's
-// context. Every field is written once, by the transport middleware that
-// builds the session, and is read-only from then on — which is what keeps the
-// struct safe to copy. The W3C Trace Context is rewritten per span and so does
-// not live here; it rides the context itself.
 type Session struct {
 	Uri           string
 	Method        string
@@ -56,10 +51,6 @@ func NewEmptyContextWithSession(ctx context.Context) context.Context {
 
 type traceKey struct{}
 
-// traceContext is the W3C Trace Context (https://www.w3.org/TR/trace-context/).
-// It is immutable: a write derives a new context instead of overwriting what
-// the old one holds, so a span's traceparent is visible for exactly as long as
-// that span's context is, and never to the parent that outlives the span.
 type traceContext struct {
 	traceparent string
 	tracestate  string
