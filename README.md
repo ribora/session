@@ -19,9 +19,6 @@ type Session struct {
 	UserAgent     string
 	UserLanguage  string
 	SourceIp      string
-
-	Traceparent string
-	Tracestate  string
 }
 ```
 
@@ -30,11 +27,54 @@ type Session struct {
 transport — a URL, a full gRPC method, a routing key, a command name. `Body`
 is the raw payload, kept for error reporting.
 
-`Traceparent` and `Tracestate` are [W3C Trace Context](https://www.w3.org/TR/trace-context/).
-They are filled by transport middleware on entry and read by client-side
-propagation on exit; the tracing middleware overwrites `Traceparent` with the
-id of the span it just started, so an outgoing call is a child of the current
-span rather than of the incoming one.
+Every field is written once, by the transport that builds the session, and is
+read-only from then on. That is what makes the struct safe to copy out of the
+context, which `pry` does on every log line.
+
+## The trace context
+
+[W3C Trace Context](https://www.w3.org/TR/trace-context/) does not live in the
+struct. The tracing middleware replaces the traceparent with the id of the span
+it just started, so an outgoing call is a child of the current span rather than
+of the incoming one — and that happens while other goroutines hold the same
+session. So it rides the context instead, where a write derives rather than
+mutates:
+
+```go
+ctx, span := tracer.Start(ctx, name, ...)
+if tp := hilton.FormatTraceparent(span.SpanContext()); tp != "" {
+	ctx = session.WithTraceparent(ctx, tp)
+}
+// the derived ctx is what must reach the handler
+```
+
+```go
+traceparent, tracestate := session.TraceFromContext(ctx)
+```
+
+`WithTraceparent` and `WithTracestate` each keep the other half. Reading a
+context that never passed through tracing middleware yields empty strings
+rather than panicking, and a nil `ctx` is tolerated.
+
+## Scope follows the span
+
+The traceparent is visible for exactly as long as the context it was written
+to. A function that starts a span, uses it and returns cannot leave its
+traceparent behind for its caller:
+
+```go
+func (r *publisher) Publish(ctx context.Context, ...) error {
+	ctx, span := tracer.Start(ctx, r.exchange+" publish", ...)
+	defer span.End()
+	ctx = session.WithTraceparent(ctx, tp)
+	...
+}
+// the caller's ctx still names the request span, not the finished publish span
+```
+
+That is the whole reason the pair is not a field. A writer must therefore make
+sure the derived context is the one that travels on — `src.SetRequest`, the
+handler call, `msgs[i].WithContext` — or the write is lost.
 
 ## API
 
@@ -43,18 +83,19 @@ span rather than of the incoming one.
 | `Setup(Session) *Session` | Fills a missing `CorrelationId` with a UUIDv7 and returns a pointer |
 | `NewContextWithSession(ctx, Session) context.Context` | `Setup` plus store under the package key |
 | `FromContext(ctx) *Session` | The session, or nil — a nil `ctx` is tolerated |
-| `NewEmptyContextWithSession(ctx) context.Context` | A `context.Background()` carrying a copy of the current session |
+| `NewEmptyContextWithSession(ctx) context.Context` | A `context.Background()` carrying a copy of the current session and its trace |
+| `WithTrace(ctx, traceparent, tracestate) context.Context` | Both halves |
+| `WithTraceparent(ctx, traceparent) / WithTracestate(ctx, tracestate)` | One half, keeping the other |
+| `TraceFromContext(ctx) (traceparent, tracestate string)` | The trace, or empty strings |
+| `TraceparentFromContext(ctx) / TracestateFromContext(ctx) string` | One half |
 
 ## The pointer is deliberate
 
-`FromContext` returns a `*Session`, and middleware mutates it in place —
-that is how the tracing layer publishes the span it started to the client
-layer without rebuilding the context. Two consequences worth knowing:
-
-- everything downstream of the middleware sees the mutation, including code
-  that captured the context earlier;
-- the struct is not safe for concurrent mutation. In practice one goroutine
-  owns a request, and fan-out uses `NewEmptyContextWithSession`, which copies.
+`FromContext` returns a `*Session` so that reading it costs one context lookup
+and no allocation — `pry.Ctx` runs on every log line. Nothing mutates it: the
+one thing that used to be rewritten in place now lives on the context. Writing
+an identity field after the session reaches a context is a data race the
+compiler will not catch.
 
 ## Detaching from the request
 
@@ -62,7 +103,9 @@ Work that must outlive the request — a goroutine started from a handler —
 cannot keep the request context: its cancellation would kill the work when the
 client disconnects. `NewEmptyContextWithSession` returns a context built on
 `context.Background()` carrying a *copy* of the current session, so the
-correlation id follows the work while the deadline does not.
+correlation id follows the work while the deadline does not. The trace is
+carried over explicitly — `context.Background()` holds nothing — so the
+detached work starts under the span that forked it.
 
 ```go
 bg := session.NewEmptyContextWithSession(ctx)
@@ -92,8 +135,8 @@ differ — `correlation-id` in gRPC metadata, `User-Agent` in AMQP headers.
 
 ## What it does not do
 
-- No propagation of its own. It is a data holder; the transports move it.
-- No trace-context parsing. `Traceparent` is an opaque string here; `hilton`
+- No propagation of its own. It is a holder; the transports move it.
+- No trace-context parsing. The traceparent is an opaque string here; `hilton`
   formats and parses it.
 - No authentication or user identity. Nothing in `Session` is a claim about
   who the caller is — it identifies a request, not a principal.
