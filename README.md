@@ -23,9 +23,10 @@ type Session struct {
 ```
 
 `Method` is the transport, not the HTTP verb alone: `GET`/`POST` from HTTP,
-`GRPC`, `AMQP`, `CLI`, `CRON`. `Uri` is whatever names the work in that
+`GRPC`, `AMQP`, `OUTBOX`, `CLI`, `CRON`. `Uri` is whatever names the work in that
 transport — a URL, a full gRPC method, a routing key, a command name. `Body`
-is the raw payload, kept for error reporting.
+is the raw payload, kept for error reporting; an AMQP delivery handled in a
+batch of several carries none.
 
 Every field is written once, by the transport that builds the session, and is
 read-only from then on. That is what makes the struct safe to copy out of the
@@ -126,7 +127,7 @@ new correlation id rather than returning nothing.
 | `http` | `middleware.NewSession` reads the correlation, user-agent, language, source-ip and traceparent headers | the same middleware echoes `CorrelationId` back as a response header; `client` sends all of them |
 | `grpc` | `interceptor.Session` reads incoming metadata, falling back to `peer` for `SourceIp` and to gRPC's own `user-agent` | `client/interceptor.Session` appends them to outgoing metadata |
 | `amqp` | the consumer builds a session per delivery from the message headers and `CorrelationId` | the publisher writes them back into `amqp.Publishing` headers |
-| `waffle` | `app.NewContextWithCommand` (`CLI`) and the cron tool (`CRON`) synthesize one, so a background job is as traceable as a request | — |
+| `waffle` | `app.NewContextWithCommand` (`CLI`), the cron tool (`CRON`) and the outbox relay (`OUTBOX`) synthesize one, so a background job is as traceable as a request | — |
 | `pry` | — | `pry.Ctx(ctx)` forwards the fields to Sentry as tags, request url/method/data and headers |
 
 Header names are not this package's business: each transport owns its own
