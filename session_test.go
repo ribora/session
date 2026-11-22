@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"gitlab.com/gorib/session"
+	"github.com/ribora/session"
 )
 
 const (

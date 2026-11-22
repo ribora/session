@@ -1,4 +1,4 @@
-# gorib/session
+# ribora/session
 
 Request and command identity, carried in the context. One struct that every
 transport fills on the way in and every client reads on the way out, so a
